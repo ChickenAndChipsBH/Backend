@@ -1,19 +1,12 @@
+// go_program_caller.go
+
 package main
 
 import (
-	"encoding/csv"
 	"encoding/json"
+	"io"
 	"log"
-	"math/rand"
 	"net/http"
-	"os"
-	"sync"
-)
-
-var (
-	questions     []QuestionAnswer
-	usedQuestions = make(map[int]bool)
-	mu            sync.Mutex
 )
 
 type QuestionAnswer struct {
@@ -21,91 +14,27 @@ type QuestionAnswer struct {
 	Answer   string `json:"answer"`
 }
 
-func init() {
-	err := loadQuestionsFromCSV("Backend/questions.csv")
-	if err != nil {
-		log.Fatal("Error loading questions:", err)
-	}
-}
-
-func loadQuestionsFromCSV(filePath string) error {
-	file, err := os.Open(filePath)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	reader := csv.NewReader(file)
-	reader.Comma = '|' // Set the delimiter to '|'
-
-	records, err := reader.ReadAll()
-	if err != nil {
-		return err
-	}
-
-	for _, record := range records {
-		qa := QuestionAnswer{
-			Question: record[0],
-			Answer:   record[1],
-		}
-		questions = append(questions, qa)
-	}
-
-	return nil
-}
-
-func HandleQuestion(w http.ResponseWriter, r *http.Request) {
-	mu.Lock()
-	defer mu.Unlock()
-
-	// Check if all questions have been used
-	if len(usedQuestions) == len(questions) {
-		// Respond with JSON error message
-		errorMessage := struct {
-			Error string `json:"error"`
-		}{"No more questions available"}
-		jsonResponse, _ := json.Marshal(errorMessage)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		w.Write(jsonResponse)
-		return
-	}
-
-	// Get a random unused question
-	var qa QuestionAnswer
-	for {
-		idx := rand.Intn(len(questions))
-		if !usedQuestions[idx] {
-			qa = questions[idx]
-			usedQuestions[idx] = true
-			break
-		}
-	}
-
-	// Marshal the QuestionAnswer struct to JSON
-	jsonResponse, err := json.Marshal(qa)
-	if err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		log.Println("Error marshaling JSON:", err)
-		return
-	}
-
-	// Set the Content-Type header to application/json
-	w.Header().Set("Content-Type", "application/json")
-
-	// Write the JSON response
-	w.Write(jsonResponse)
-}
-
 func main() {
-	log.Printf("Starting quiz server\n")
+	// Send a GET request to the API endpoint
+	resp, err := http.Get("http://localhost:8080/questioneasy")
+	if err != nil {
+		log.Fatal("Error sending request:", err)
+	}
+	defer resp.Body.Close()
 
-	log.Printf("Starting server on port 8080...\n")
+	// Read the response body
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Fatal("Error reading response:", err)
+	}
 
-	// Register the /question endpoint
-	http.HandleFunc("/question", HandleQuestion)
+	// Parse the JSON response into a QuestionAnswer struct
+	var qa QuestionAnswer
+	if err := json.Unmarshal(body, &qa); err != nil {
+		log.Fatal("Error parsing JSON:", err)
+	}
 
-	// Start the HTTP server
-	log.Println("Starting server on port 8080...")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	// Print the question and answer
+	log.Println("Question:", qa.Question)
+	log.Println("Answer:", qa.Answer)
 }
